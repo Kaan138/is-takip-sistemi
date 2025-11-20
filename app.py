@@ -10,6 +10,16 @@ import plotly.express as px # Grafik kütüphanesi
 # --- AYARLAR ---
 st.set_page_config(page_title="Kariyer Takip 360", layout="wide", page_icon="🚀")
 
+# --- RENK AYARLARI (Burası Grafikleri Yönetir) ---
+RENK_HARITASI = {
+    "Teklif Alındı": "#2ECC71",      # Parlak Yeşil
+    "Reddedildi": "#E74C3C",         # Kırmızı
+    "Mülakat Bekleniyor": "#F39C12", # Turuncu
+    "Görüşüldü": "#F1C40F",          # Sarı
+    "Başvuruldu": "#3498DB",         # Mavi
+    "Bilinmiyor": "#95A5A6"          # Gri
+}
+
 # --- BAĞLANTILAR ---
 def baglanti_kur():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -111,7 +121,9 @@ with tab1:
         st.divider()
         st.subheader("🔍 Filtrele")
         if not df.empty:
-            secilen_durumlar = st.multiselect("Duruma Göre Filtrele", df['Durum'].unique())
+            # Mevcut durumları al
+            mevcut_durumlar = df['Durum'].unique()
+            secilen_durumlar = st.multiselect("Duruma Göre Filtrele", mevcut_durumlar)
             arama_terimi = st.text_input("Şirket Ara")
 
     # SAĞ PANEL: Liste
@@ -132,25 +144,24 @@ with tab1:
                 # Renk ve İkon Ayarı
                 durum = row['Durum']
                 icon = "⚪"
-                border_color = "grey"
                 
-                if durum == "Reddedildi": icon="🔴"; border_color="red"
-                elif durum == "Teklif Alındı": icon="🟢"; border_color="green"
-                elif durum == "Mülakat Bekleniyor": icon="🟠"; border_color="orange"
-                elif durum == "Görüşüldü": icon="🟡"; border_color="yellow"
+                if durum == "Reddedildi": icon="🔴"
+                elif durum == "Teklif Alındı": icon="🟢"
+                elif durum == "Mülakat Bekleniyor": icon="🟠"
+                elif durum == "Görüşüldü": icon="🟡"
 
                 # Ghosting Dedektörü (14 Gündür ses yoksa uyar)
                 uyari = ""
                 if pd.notnull(row['Tarih_Obj']):
                     gecen_gun = (datetime.now() - row['Tarih_Obj']).days
                     if gecen_gun > 14 and durum == "Başvuruldu":
-                        uyari = "⚠️ **Unutulmuş Olabilir! (14+ gün)**"
+                        uyari = "⚠️ **(14+ gün)**"
 
                 with st.expander(f"{icon} {row['Sirket']} - {row['Pozisyon']} {uyari}"):
                     c1, c2 = st.columns([2, 1])
                     with c1:
                         st.caption(f"Son Güncelleme: {row['Tarih']}")
-                        if uyari: st.warning("Bu başvuruya uzun süredir güncelleme gelmedi. Bir takip maili atmak isteyebilirsin.")
+                        if uyari: st.warning("Bu başvuruya uzun süredir güncelleme gelmedi.")
                         st.info(f"Not: {row['Notlar']}")
                     
                     with c2:
@@ -175,26 +186,36 @@ with tab2:
         col_grafik1, col_grafik2 = st.columns(2)
         
         with col_grafik1:
-            # 1. Durum Dağılımı (Pasta Grafiği)
+            # 1. Durum Dağılımı (Pasta Grafiği) - RENKLİ
             st.write("**Başvuru Durumları**")
-            fig_pie = px.pie(df, names='Durum', hole=0.4, color_discrete_sequence=px.colors.sequential.RdBu)
+            
+            # Pasta Grafiği (Renk Haritasını Burada Kullanıyoruz)
+            fig_pie = px.pie(df, names='Durum', hole=0.4, 
+                             color='Durum',
+                             color_discrete_map=RENK_HARITASI)
+            
             st.plotly_chart(fig_pie, use_container_width=True)
             
         with col_grafik2:
-            # 2. Şirket Bazlı Başvurular (Bar Grafiği) - En çok hangi şirkete başvurdum?
-            # (Eğer bir şirkete birden fazla pozisyon için başvurduysan mantıklı)
+            # 2. Şirket Bazlı Başvurular
             st.write("**Şirketlere Göre Yoğunluk**")
             sirket_counts = df['Sirket'].value_counts().reset_index()
             sirket_counts.columns = ['Sirket', 'Adet']
-            fig_bar = px.bar(sirket_counts, x='Sirket', y='Adet', color='Adet')
+            fig_bar = px.bar(sirket_counts, x='Sirket', y='Adet')
             st.plotly_chart(fig_bar, use_container_width=True)
 
         st.divider()
         
-        # 3. Zaman Çizelgesi (Timeline)
-        if 'Tarih_Obj' in df.columns:
-            st.write("**Başvuru Zaman Çizelgesi**")
-            # Tarihe göre sırala
+        # 3. Zaman Çizelgesi (Timeline) - RENKLİ
+        if 'Tarih_Obj' in df.columns and pd.notnull(df['Tarih_Obj']).any():
+            st.write("**Zaman İçinde Başvurular**")
             df_sorted = df.sort_values(by='Tarih_Obj')
-            fig_line = px.scatter(df_sorted, x='Tarih_Obj', y='Sirket', color='Durum', size_max=10, title="Zaman İçinde Başvurular")
+            
+            # Scatter Grafiği (Renk Haritasını Burada da Kullanıyoruz)
+            fig_line = px.scatter(df_sorted, x='Tarih_Obj', y='Sirket', 
+                                  color='Durum', 
+                                  size_max=15,
+                                  color_discrete_map=RENK_HARITASI,
+                                  title="Tarihsel Süreç")
+            
             st.plotly_chart(fig_line, use_container_width=True)
