@@ -10,7 +10,7 @@ import plotly.express as px
 # --- AYARLAR ---
 st.set_page_config(page_title="Kariyer Takip 360", layout="wide", page_icon="🚀")
 
-# --- RENK AYARLARI ---
+# --- RENK VE STİL AYARLARI ---
 RENK_HARITASI = {
     "Teklif Alındı": "#2ECC71",      # Yeşil
     "Reddedildi": "#E74C3C",         # Kırmızı
@@ -47,7 +47,6 @@ def sayfalari_hazirla(sheet):
     try: ws_gecmis = sheet.worksheet("Gecmis")
     except:
         ws_gecmis = sheet.add_worksheet(title="Gecmis", rows="100", cols="20")
-        # YENİ SÜTUN EKLENDİ: Gecmis_ID (En başa)
         ws_gecmis.append_row(["Gecmis_ID", "Basvuru_ID", "Islem", "Detay", "Tarih"])
     return ws_basvuru, ws_gecmis
 
@@ -55,7 +54,7 @@ def sayfalari_hazirla(sheet):
 def veri_ekle(ws_b, ws_g, sirket, pozisyon, durum, notlar):
     tarih = datetime.now().strftime("%d-%m-%Y %H:%M")
     basvuru_id = str(uuid.uuid4())[:8]
-    gecmis_id = str(uuid.uuid4())[:8] # Geçmiş satırı için özel ID
+    gecmis_id = str(uuid.uuid4())[:8]
     
     ws_b.append_row([basvuru_id, sirket, pozisyon, durum, tarih, notlar])
     ws_g.append_row([gecmis_id, basvuru_id, "YENİ KAYIT", f"Durum: {durum}", tarih])
@@ -80,20 +79,26 @@ def veri_guncelle(ws_b, ws_g, id, sirket, pozisyon, durum, notlar):
     except Exception as e:
         st.error(f"Güncelleme hatası: {e}")
 
-def veri_sil(ws_b, ws_g, id): # Başvuruyu komple siler
+def veri_sil(ws_b, ws_g, id):
     try:
         cell = ws_b.find(id)
         ws_b.delete_rows(cell.row)
-        # İsteğe bağlı: Geçmiş kayıtları kalabilir veya temizlenebilir.
-        # Şimdilik veri kaybı olmaması için geçmişi silmiyoruz, "Arşiv" gibi kalıyor.
     except: pass
 
-def gecmis_tekil_sil(ws_g, gecmis_id): # Sadece tek bir geçmiş satırını siler
+def gecmis_tekil_sil(ws_g, gecmis_id):
     try:
         cell = ws_g.find(gecmis_id)
         ws_g.delete_rows(cell.row)
     except Exception as e:
         st.error(f"Silme hatası: {e}")
+
+# --- STİL FONKSİYONU (TABLO İÇİN) ---
+def renklerdir(val):
+    """Pandas DataFrame'i boyamak için yardımcı fonksiyon"""
+    color = RENK_HARITASI.get(val, "")
+    if color:
+        return f'background-color: {color}; color: white; font-weight: bold;'
+    return ''
 
 # --- UYGULAMA BAŞLANGICI ---
 sheet = baglanti_kur()
@@ -117,14 +122,53 @@ if not df_gecmis.empty:
     if 'Basvuru_ID' in df_gecmis.columns: df_gecmis['Basvuru_ID'] = df_gecmis['Basvuru_ID'].astype(str)
     if 'Gecmis_ID' in df_gecmis.columns: df_gecmis['Gecmis_ID'] = df_gecmis['Gecmis_ID'].astype(str)
 
-# --- SEKMELER ---
-tab1, tab2 = st.tabs(["📋 Başvurular & İşlemler", "📊 Analiz & Dashboard"])
+# --- SEKMELER (YENİ YAPI) ---
+tab_goruntule, tab_duzenle, tab_analiz = st.tabs(["👀 Görüntüle (Liste)", "✏️ Düzenle & Yönet", "📊 Analiz"])
 
-# --- TAB 1: LİSTE ---
-with tab1:
+# ==========================================
+# TAB 1: SADECE GÖRÜNTÜLEME (LİSTE MODU)
+# ==========================================
+with tab_goruntule:
+    st.markdown("### 📑 Tüm Başvurular")
+    
+    if df.empty:
+        st.info("Henüz veri yok.")
+    else:
+        # Filtreleme Alanı
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            filtre_durum = st.multiselect("Duruma Göre Filtrele", df['Durum'].unique(), key="view_filter")
+        with col_f2:
+            filtre_ara = st.text_input("Hızlı Arama (Şirket)", key="view_search")
+
+        # Filtreleri Uygula
+        df_view = df.copy()
+        if filtre_durum:
+            df_view = df_view[df_view['Durum'].isin(filtre_durum)]
+        if filtre_ara:
+            df_view = df_view[df_view['Sirket'].str.contains(filtre_ara, case=False)]
+
+        # Gereksiz sütunları (ID, Tarih_Obj) gizle
+        cols_to_show = ['Sirket', 'Pozisyon', 'Durum', 'Tarih', 'Notlar']
+        # Eğer veri çerçevesinde bu sütunlar varsa seç, yoksa hepsini göster
+        final_cols = [c for c in cols_to_show if c in df_view.columns]
+        
+        # Tabloyu Renklendir ve Göster
+        # "Durum" sütununu boyuyoruz
+        st.dataframe(
+            df_view[final_cols].style.applymap(renklerdir, subset=['Durum']),
+            use_container_width=True,
+            hide_index=True,
+            height=500 # Liste yüksekliği
+        )
+
+# ==========================================
+# TAB 2: DÜZENLEME & KARTLAR (ESKİ TAB 1)
+# ==========================================
+with tab_duzenle:
     col_form, col_list = st.columns([1, 2])
 
-    # SOL PANEL
+    # SOL PANEL (EKLEME)
     with col_form:
         st.subheader("Yeni Ekle")
         with st.form("ekle_form", clear_on_submit=True):
@@ -139,29 +183,20 @@ with tab1:
                     st.rerun()
                 else:
                     st.error("Eksik bilgi.")
-        
-        st.divider()
-        st.subheader("🔍 Filtrele")
-        secilen_durumlar = []
-        arama_terimi = ""
-        if not df.empty:
-            secilen_durumlar = st.multiselect("Durum Seç", df['Durum'].unique())
-            arama_terimi = st.text_input("Şirket Ara")
 
-    # SAĞ PANEL
+    # SAĞ PANEL (KARTLAR)
     with col_list:
+        st.subheader("Düzenle & Geçmiş")
         if df.empty:
             st.info("Kayıt bulunamadı.")
         else:
-            df_goster = df.copy()
-            if secilen_durumlar:
-                df_goster = df_goster[df_goster['Durum'].isin(secilen_durumlar)]
-            if arama_terimi:
-                df_goster = df_goster[df_goster['Sirket'].str.contains(arama_terimi, case=False)]
+            # Buraya da basit bir arama koyalım
+            arama_edit = st.text_input("Düzenlenecek Şirketi Ara", key="edit_search")
+            df_edit = df.copy()
+            if arama_edit:
+                df_edit = df_edit[df_edit['Sirket'].str.contains(arama_edit, case=False)]
 
-            st.write(f"**Kayıt Sayısı:** {len(df_goster)}")
-
-            for index, row in df_goster.iterrows():
+            for index, row in df_edit.iterrows():
                 row_id = str(row['ID'])
                 durum = row['Durum']
                 icon = "⚪"
@@ -173,31 +208,23 @@ with tab1:
                 with st.expander(f"{icon} {row['Sirket']} - {row['Pozisyon']}"):
                     c_gecmis, c_guncelle = st.columns([3, 2])
                     
-                    # --- SOL: GEÇMİŞ LİSTESİ ---
+                    # SOL: GEÇMİŞ
                     with c_gecmis:
                         st.markdown("##### 🕒 İşlem Geçmişi")
-                        
-                        # Bu başvuruya ait geçmiş kayıtlarını bul
                         if not df_gecmis.empty:
                             bu_gecmis = df_gecmis[df_gecmis['Basvuru_ID'] == row_id].sort_values(by='Tarih', ascending=False)
-                            
                             if not bu_gecmis.empty:
-                                # Her geçmiş satırını tek tek yazdırıyoruz
                                 for idx, h_row in bu_gecmis.iterrows():
                                     g_id = str(h_row['Gecmis_ID'])
-                                    
-                                    # Her satırı bir kutu içinde göster
                                     with st.container():
                                         gc1, gc2 = st.columns([4, 1])
                                         with gc1:
                                             st.markdown(f"**{h_row['Tarih']}** | *{h_row['Islem']}*")
                                             st.caption(f"{h_row['Detay']}")
                                         with gc2:
-                                            # SİLME BUTONU (EMİN MİSİN ÖZELLİKLİ)
-                                            # Popover, butona basınca küçük bir pencere açar
                                             with st.popover("Sil", use_container_width=True):
-                                                st.write("Bu kaydı silmek istediğine emin misin?")
-                                                if st.button("Evet, Sil", key=f"gs_{g_id}"):
+                                                st.write("Silinsin mi?")
+                                                if st.button("Evet", key=f"gs_{g_id}"):
                                                     with st.spinner("Siliniyor..."):
                                                         gecmis_tekil_sil(ws_gecmis, g_id)
                                                     st.rerun()
@@ -207,36 +234,34 @@ with tab1:
                         else:
                             st.info("Geçmiş verisi yok.")
 
-                    # --- SAĞ: GÜNCELLEME ---
+                    # SAĞ: GÜNCELLEME
                     with c_guncelle:
                         st.markdown("##### ⚙️ Güncelleme")
-                        
-                        secenekler = ["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"]
                         idx = 0
+                        secenekler = ["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"]
                         if durum in secenekler: idx = secenekler.index(durum)
-                            
-                        y_durum = st.selectbox("Yeni Durum", secenekler, key=f"s_{row_id}", index=idx)
-                        y_not = st.text_input("Not Güncelle", value=row['Notlar'], key=f"n_{row_id}")
                         
-                        col_btn1, col_btn2 = st.columns(2)
-                        with col_btn1:
+                        y_durum = st.selectbox("Durum", secenekler, key=f"s_{row_id}", index=idx)
+                        y_not = st.text_input("Not", value=row['Notlar'], key=f"n_{row_id}")
+                        
+                        cb1, cb2 = st.columns(2)
+                        with cb1:
                             if st.button("💾 Kaydet", key=f"save_{row_id}"):
                                 with st.spinner("..."):
                                     veri_guncelle(ws_basvuru, ws_gecmis, row_id, row['Sirket'], row['Pozisyon'], y_durum, y_not)
-                                st.success("Güncellendi!")
                                 st.rerun()
-                        
-                        with col_btn2:
-                            # ANA BAŞVURU SİLME İÇİN DE "EMİN MİSİN" KUTUSU
+                        with cb2:
                             with st.popover("🗑️ Sil", use_container_width=True):
-                                st.error("DİKKAT! Bu başvuruyu tamamen silmek üzeresin.")
-                                if st.button("Onaylıyorum, Sil", key=f"del_confirm_{row_id}", type="primary"):
-                                    with st.spinner("Siliniyor..."):
+                                st.error("Başvuru tamamen silinsin mi?")
+                                if st.button("Evet, Sil", key=f"del_confirm_{row_id}", type="primary"):
+                                    with st.spinner("..."):
                                         veri_sil(ws_basvuru, ws_gecmis, row_id)
                                     st.rerun()
 
-# --- TAB 2: ANALİZ ---
-with tab2:
+# ==========================================
+# TAB 3: ANALİZ (ESKİ TAB 2)
+# ==========================================
+with tab_analiz:
     if df.empty:
         st.info("Analiz için veri gerekli.")
     else:
