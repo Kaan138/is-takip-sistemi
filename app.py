@@ -2,190 +2,199 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
+import os
+import plotly.express as px # Grafik kütüphanesi
 
 # --- AYARLAR ---
-st.set_page_config(page_title="Bulut İş Takip", layout="wide", page_icon="☁️")
+st.set_page_config(page_title="Kariyer Takip 360", layout="wide", page_icon="🚀")
 
-
-# --- GOOGLE SHEETS BAĞLANTISI ---
-# Streamlit Cloud'da "Secrets", Yerelde "credentials.json" kullanılır
+# --- BAĞLANTILAR ---
 def baglanti_kur():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
-    # Eğer Streamlit Cloud üzerindeysek Secrets'tan oku
-    if "gcp_service_account" in st.secrets:
-        creds_dict = st.secrets["gcp_service_account"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    creds = None
+    if os.path.exists("credentials.json"):
+        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
     else:
-        # Yerel bilgisayarda credentials.json dosyasından oku
         try:
-            creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-        except:
-            st.error("credentials.json dosyası bulunamadı!")
-            st.stop()
-
+            if "gcp_service_account" in st.secrets:
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
+        except: pass
+    
+    if creds is None: st.stop()
     client = gspread.authorize(creds)
+    try: sheet = client.open("Is_Takip_Verileri")
+    except: st.stop()
+    return sheet
 
-    # Tabloyu Aç (Adı tam olarak 'Is_Takip_Verileri' olmalı)
-    try:
-        sheet = client.open("Is_Takip_Verileri")
-        return sheet
-    except:
-        st.error(
-            "Google Sheet dosyası bulunamadı. Lütfen adının 'Is_Takip_Verileri' olduğundan ve bot maili ile paylaşıldığından emin olun.")
-        st.stop()
-
-
-# --- YARDIMCI FONKSİYONLAR ---
 def sayfalari_hazirla(sheet):
-    # Başvurular sayfası var mı kontrol et, yoksa oluştur
-    try:
-        ws_basvuru = sheet.worksheet("Basvurular")
+    try: ws_basvuru = sheet.worksheet("Basvurular")
     except:
         ws_basvuru = sheet.add_worksheet(title="Basvurular", rows="100", cols="20")
-        ws_basvuru.append_row(["ID", "Sirket", "Pozisyon", "Durum", "Tarih", "Notlar"])  # Başlıklar
-
-    # Geçmiş sayfası var mı kontrol et
-    try:
-        ws_gecmis = sheet.worksheet("Gecmis")
+        ws_basvuru.append_row(["ID", "Sirket", "Pozisyon", "Durum", "Tarih", "Notlar"])
+    try: ws_gecmis = sheet.worksheet("Gecmis")
     except:
         ws_gecmis = sheet.add_worksheet(title="Gecmis", rows="100", cols="20")
-        ws_gecmis.append_row(["Basvuru_ID", "Islem", "Detay", "Tarih"])  # Başlıklar
-
+        ws_gecmis.append_row(["Basvuru_ID", "Islem", "Detay", "Tarih"])
     return ws_basvuru, ws_gecmis
 
-
+# --- CRUD FONKSİYONLARI ---
 def veri_ekle(ws_b, ws_g, sirket, pozisyon, durum, notlar):
     tarih = datetime.now().strftime("%d-%m-%Y %H:%M")
-    yeni_id = str(uuid.uuid4())[:8]  # Benzersiz ID oluştur
-
-    # Başvurulara ekle
+    yeni_id = str(uuid.uuid4())[:8]
     ws_b.append_row([yeni_id, sirket, pozisyon, durum, tarih, notlar])
-
-    # Geçmişe ekle
     ws_g.append_row([yeni_id, "YENİ KAYIT", f"Durum: {durum}", tarih])
-
 
 def veri_guncelle(ws_b, ws_g, id, sirket, pozisyon, durum, notlar):
     tarih = datetime.now().strftime("%d-%m-%Y %H:%M")
-
-    # ID'nin olduğu satırı bul
-    cell = ws_b.find(id)
-    row_num = cell.row
-
-    # Eski durumu al (karşılaştırma için - 4. sütun)
-    eski_durum = ws_b.cell(row_num, 4).value
-
-    # Satırı güncelle
-    ws_b.update_cell(row_num, 2, sirket)
-    ws_b.update_cell(row_num, 3, pozisyon)
-    ws_b.update_cell(row_num, 4, durum)
-    ws_b.update_cell(row_num, 5, tarih)
-    ws_b.update_cell(row_num, 6, notlar)
-
-    # Değişikliği geçmişe işle
-    if eski_durum != durum:
-        ws_g.append_row([id, "GÜNCELLEME", f"{eski_durum} -> {durum}", tarih])
-    elif notlar:
-        ws_g.append_row([id, "NOT GÜNCELLEME", f"Not: {notlar}", tarih])
-
+    try:
+        cell = ws_b.find(id)
+        row = cell.row
+        eski_durum = ws_b.cell(row, 4).value
+        ws_b.update_cell(row, 2, sirket)
+        ws_b.update_cell(row, 3, pozisyon)
+        ws_b.update_cell(row, 4, durum)
+        ws_b.update_cell(row, 5, tarih)
+        ws_b.update_cell(row, 6, notlar)
+        
+        if eski_durum != durum:
+            ws_g.append_row([id, "GÜNCELLEME", f"{eski_durum} -> {durum}", tarih])
+        elif notlar:
+            ws_g.append_row([id, "NOT GÜNCELLEME", f"Not: {notlar}", tarih])
+    except: pass
 
 def veri_sil(ws_b, ws_g, id):
-    # ID'nin olduğu satırı bul ve sil
     try:
         cell = ws_b.find(id)
         ws_b.delete_rows(cell.row)
-        # Not: Geçmiş kayıtları silinmiyor, arşiv olarak kalıyor.
-    except:
-        st.error("Silinirken hata oluştu.")
+    except: pass
 
-
-# --- ARAYÜZ ---
+# --- ANA UYGULAMA ---
 sheet = baglanti_kur()
 ws_basvuru, ws_gecmis = sayfalari_hazirla(sheet)
 
-st.title("☁️ Bulut Tabanlı İş Takip")
-
-# Sidebar - Ekleme
-with st.sidebar:
-    st.header("Yeni Başvuru")
-    s_sirket = st.text_input("Şirket Adı")
-    s_pozisyon = st.text_input("Pozisyon")
-    s_durum = st.selectbox("Durum", ["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"])
-    s_not = st.text_area("Notlar")
-
-    if st.button("Kaydet", type="primary"):
-        if s_sirket and s_pozisyon:
-            with st.spinner("Google Sheets'e kaydediliyor..."):
-                veri_ekle(ws_basvuru, ws_gecmis, s_sirket, s_pozisyon, s_durum, s_not)
-            st.success("Kaydedildi!")
-            st.rerun()
-        else:
-            st.warning("Şirket ve Pozisyon zorunludur.")
+st.title("🚀 Kariyer Takip Merkezi")
 
 # Verileri Çek
 data = ws_basvuru.get_all_records()
 df = pd.DataFrame(data)
-
-if not df.empty:
-    # İstatistikler
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Toplam Başvuru", len(df))
-    col2.metric("Mülakat Bekleyen", len(df[df['Durum'] == 'Mülakat Bekleniyor']))
-    col3.metric("Teklifler", len(df[df['Durum'] == 'Teklif Alındı']))
-    st.divider()
-
-    # Listeleme
-    # DataFrame ID'leri string olarak algılasın diye
+if not df.empty and 'ID' in df.columns:
     df['ID'] = df['ID'].astype(str)
+    # Tarih formatını datetime objesine çevir (Analiz için gerekli)
+    df['Tarih_Obj'] = pd.to_datetime(df['Tarih'], format="%d-%m-%Y %H:%M", errors='coerce')
 
-    for index, row in df.iterrows():
-        icon = "⚪"
-        if row['Durum'] == "Reddedildi":
-            icon = "🔴"
-        elif row['Durum'] == "Teklif Alındı":
-            icon = "🟢"
-        elif row['Durum'] == "Mülakat Bekleniyor":
-            icon = "🟠"
+# --- SEKMELER ---
+tab1, tab2 = st.tabs(["📋 Başvurular & İşlemler", "📊 Analiz & Dashboard"])
 
-        with st.expander(f"{icon} **{row['Sirket']}** - {row['Pozisyon']} ({row['Durum']})"):
-            col_info, col_action = st.columns([3, 2])
+# --- TAB 1: LİSTE VE İŞLEMLER ---
+with tab1:
+    col_form, col_list = st.columns([1, 2])
 
-            with col_info:
-                st.write(f"**Son İşlem:** {row['Tarih']}")
-                st.info(f"**Not:** {row['Notlar']}")
-
-                # Bu başvuruya ait geçmişi çek
-                gecmis_data = ws_gecmis.get_all_records()
-                gdf = pd.DataFrame(gecmis_data)
-                if not gdf.empty:
-                    gdf['Basvuru_ID'] = gdf['Basvuru_ID'].astype(str)
-                    bu_gecmis = gdf[gdf['Basvuru_ID'] == row['ID']]
-                    if not bu_gecmis.empty:
-                        st.caption("Süreç Geçmişi")
-                        st.dataframe(bu_gecmis[['Islem', 'Detay', 'Tarih']], hide_index=True)
-
-            with col_action:
-                st.write("### İşlemler")
-                y_durum = st.selectbox("Durum",
-                                       ["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"],
-                                       key=f"sel_{row['ID']}",
-                                       index=["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı",
-                                              "Reddedildi"].index(row['Durum']))
-                y_not = st.text_input("Not Güncelle", value=row['Notlar'], key=f"not_{row['ID']}")
-
-                if st.button("Güncelle", key=f"btn_up_{row['ID']}"):
-                    with st.spinner("Güncelleniyor..."):
-                        veri_guncelle(ws_basvuru, ws_gecmis, row['ID'], row['Sirket'], row['Pozisyon'], y_durum, y_not)
-                    st.success("Güncellendi!")
+    # SOL PANEL: Yeni Ekleme ve Filtreler
+    with col_form:
+        st.subheader("Yeni Ekle")
+        with st.form("ekle_form", clear_on_submit=True):
+            s_sirket = st.text_input("Şirket")
+            s_pozisyon = st.text_input("Pozisyon")
+            s_durum = st.selectbox("Durum", ["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"])
+            s_not = st.text_area("Not")
+            if st.form_submit_button("Kaydet"):
+                if s_sirket and s_pozisyon:
+                    with st.spinner("Kaydediliyor..."):
+                        veri_ekle(ws_basvuru, ws_gecmis, s_sirket, s_pozisyon, s_durum, s_not)
+                    st.success("Eklendi!")
                     st.rerun()
+                else:
+                    st.error("Şirket/Pozisyon giriniz.")
+        
+        st.divider()
+        st.subheader("🔍 Filtrele")
+        if not df.empty:
+            secilen_durumlar = st.multiselect("Duruma Göre Filtrele", df['Durum'].unique())
+            arama_terimi = st.text_input("Şirket Ara")
 
-                if st.button("Sil", key=f"btn_del_{row['ID']}", type="primary"):
-                    with st.spinner("Siliniyor..."):
-                        veri_sil(ws_basvuru, ws_gecmis, row['ID'])
-                    st.rerun()
+    # SAĞ PANEL: Liste
+    with col_list:
+        if df.empty:
+            st.info("Henüz kayıt yok.")
+        else:
+            # Filtreleme Mantığı
+            df_goster = df.copy()
+            if secilen_durumlar:
+                df_goster = df_goster[df_goster['Durum'].isin(secilen_durumlar)]
+            if arama_terimi:
+                df_goster = df_goster[df_goster['Sirket'].str.contains(arama_terimi, case=False)]
 
-else:
-    st.info("Henüz hiç başvuru kaydı yok. Soldan ekleyebilirsiniz.")
+            st.write(f"**Gösterilen Kayıt:** {len(df_goster)}")
+
+            for index, row in df_goster.iterrows():
+                # Renk ve İkon Ayarı
+                durum = row['Durum']
+                icon = "⚪"
+                border_color = "grey"
+                
+                if durum == "Reddedildi": icon="🔴"; border_color="red"
+                elif durum == "Teklif Alındı": icon="🟢"; border_color="green"
+                elif durum == "Mülakat Bekleniyor": icon="🟠"; border_color="orange"
+                elif durum == "Görüşüldü": icon="🟡"; border_color="yellow"
+
+                # Ghosting Dedektörü (14 Gündür ses yoksa uyar)
+                uyari = ""
+                if pd.notnull(row['Tarih_Obj']):
+                    gecen_gun = (datetime.now() - row['Tarih_Obj']).days
+                    if gecen_gun > 14 and durum == "Başvuruldu":
+                        uyari = "⚠️ **Unutulmuş Olabilir! (14+ gün)**"
+
+                with st.expander(f"{icon} {row['Sirket']} - {row['Pozisyon']} {uyari}"):
+                    c1, c2 = st.columns([2, 1])
+                    with c1:
+                        st.caption(f"Son Güncelleme: {row['Tarih']}")
+                        if uyari: st.warning("Bu başvuruya uzun süredir güncelleme gelmedi. Bir takip maili atmak isteyebilirsin.")
+                        st.info(f"Not: {row['Notlar']}")
+                    
+                    with c2:
+                        y_durum = st.selectbox("Güncelle", ["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"], key=f"s_{row['ID']}", index=["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"].index(durum) if durum in ["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"] else 0)
+                        y_not = st.text_input("Not", value=row['Notlar'], key=f"n_{row['ID']}")
+                        if st.button("Kaydet", key=f"b_{row['ID']}"):
+                             with st.spinner("..."):
+                                veri_guncelle(ws_basvuru, ws_gecmis, row['ID'], row['Sirket'], row['Pozisyon'], y_durum, y_not)
+                             st.rerun()
+                        if st.button("Sil", key=f"del_{row['ID']}", type="primary"):
+                             with st.spinner("..."):
+                                veri_sil(ws_basvuru, ws_gecmis, row['ID'])
+                             st.rerun()
+
+# --- TAB 2: ANALİZ ---
+with tab2:
+    if df.empty:
+        st.info("Analiz için veri gerekli.")
+    else:
+        st.subheader("📊 Başvuru Analizleri")
+        
+        col_grafik1, col_grafik2 = st.columns(2)
+        
+        with col_grafik1:
+            # 1. Durum Dağılımı (Pasta Grafiği)
+            st.write("**Başvuru Durumları**")
+            fig_pie = px.pie(df, names='Durum', hole=0.4, color_discrete_sequence=px.colors.sequential.RdBu)
+            st.plotly_chart(fig_pie, use_container_width=True)
+            
+        with col_grafik2:
+            # 2. Şirket Bazlı Başvurular (Bar Grafiği) - En çok hangi şirkete başvurdum?
+            # (Eğer bir şirkete birden fazla pozisyon için başvurduysan mantıklı)
+            st.write("**Şirketlere Göre Yoğunluk**")
+            sirket_counts = df['Sirket'].value_counts().reset_index()
+            sirket_counts.columns = ['Sirket', 'Adet']
+            fig_bar = px.bar(sirket_counts, x='Sirket', y='Adet', color='Adet')
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+        st.divider()
+        
+        # 3. Zaman Çizelgesi (Timeline)
+        if 'Tarih_Obj' in df.columns:
+            st.write("**Başvuru Zaman Çizelgesi**")
+            # Tarihe göre sırala
+            df_sorted = df.sort_values(by='Tarih_Obj')
+            fig_line = px.scatter(df_sorted, x='Tarih_Obj', y='Sirket', color='Durum', size_max=10, title="Zaman İçinde Başvurular")
+            st.plotly_chart(fig_line, use_container_width=True)
