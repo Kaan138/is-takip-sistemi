@@ -5,14 +5,14 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta
 import uuid
 import os
-import plotly.express as px # Grafik kütüphanesi
+import plotly.express as px
 
 # --- AYARLAR ---
 st.set_page_config(page_title="Kariyer Takip 360", layout="wide", page_icon="🚀")
 
-# --- RENK AYARLARI (Burası Grafikleri Yönetir) ---
+# --- RENK AYARLARI ---
 RENK_HARITASI = {
-    "Teklif Alındı": "#2ECC71",      # Parlak Yeşil
+    "Teklif Alındı": "#2ECC71",      # Yeşil
     "Reddedildi": "#E74C3C",         # Kırmızı
     "Mülakat Bekleniyor": "#F39C12", # Turuncu
     "Görüşüldü": "#F1C40F",          # Sarı
@@ -86,13 +86,19 @@ ws_basvuru, ws_gecmis = sayfalari_hazirla(sheet)
 
 st.title("🚀 Kariyer Takip Merkezi")
 
-# Verileri Çek
+# --- VERİLERİ ÇEK (Hem Başvurular Hem Geçmiş) ---
 data = ws_basvuru.get_all_records()
 df = pd.DataFrame(data)
+
+data_gecmis = ws_gecmis.get_all_records()
+df_gecmis = pd.DataFrame(data_gecmis)
+
 if not df.empty and 'ID' in df.columns:
     df['ID'] = df['ID'].astype(str)
-    # Tarih formatını datetime objesine çevir (Analiz için gerekli)
     df['Tarih_Obj'] = pd.to_datetime(df['Tarih'], format="%d-%m-%Y %H:%M", errors='coerce')
+
+if not df_gecmis.empty and 'Basvuru_ID' in df_gecmis.columns:
+    df_gecmis['Basvuru_ID'] = df_gecmis['Basvuru_ID'].astype(str)
 
 # --- SEKMELER ---
 tab1, tab2 = st.tabs(["📋 Başvurular & İşlemler", "📊 Analiz & Dashboard"])
@@ -101,7 +107,7 @@ tab1, tab2 = st.tabs(["📋 Başvurular & İşlemler", "📊 Analiz & Dashboard"
 with tab1:
     col_form, col_list = st.columns([1, 2])
 
-    # SOL PANEL: Yeni Ekleme ve Filtreler
+    # SOL PANEL: Yeni Ekleme
     with col_form:
         st.subheader("Yeni Ekle")
         with st.form("ekle_form", clear_on_submit=True):
@@ -121,9 +127,7 @@ with tab1:
         st.divider()
         st.subheader("🔍 Filtrele")
         if not df.empty:
-            # Mevcut durumları al
-            mevcut_durumlar = df['Durum'].unique()
-            secilen_durumlar = st.multiselect("Duruma Göre Filtrele", mevcut_durumlar)
+            secilen_durumlar = st.multiselect("Duruma Göre Filtrele", df['Durum'].unique())
             arama_terimi = st.text_input("Şirket Ara")
 
     # SAĞ PANEL: Liste
@@ -131,7 +135,6 @@ with tab1:
         if df.empty:
             st.info("Henüz kayıt yok.")
         else:
-            # Filtreleme Mantığı
             df_goster = df.copy()
             if secilen_durumlar:
                 df_goster = df_goster[df_goster['Durum'].isin(secilen_durumlar)]
@@ -141,16 +144,14 @@ with tab1:
             st.write(f"**Gösterilen Kayıt:** {len(df_goster)}")
 
             for index, row in df_goster.iterrows():
-                # Renk ve İkon Ayarı
                 durum = row['Durum']
                 icon = "⚪"
-                
                 if durum == "Reddedildi": icon="🔴"
                 elif durum == "Teklif Alındı": icon="🟢"
                 elif durum == "Mülakat Bekleniyor": icon="🟠"
                 elif durum == "Görüşüldü": icon="🟡"
 
-                # Ghosting Dedektörü (14 Gündür ses yoksa uyar)
+                # Ghosting Dedektörü
                 uyari = ""
                 if pd.notnull(row['Tarih_Obj']):
                     gecen_gun = (datetime.now() - row['Tarih_Obj']).days
@@ -158,19 +159,41 @@ with tab1:
                         uyari = "⚠️ **(14+ gün)**"
 
                 with st.expander(f"{icon} {row['Sirket']} - {row['Pozisyon']} {uyari}"):
-                    c1, c2 = st.columns([2, 1])
-                    with c1:
-                        st.caption(f"Son Güncelleme: {row['Tarih']}")
-                        if uyari: st.warning("Bu başvuruya uzun süredir güncelleme gelmedi.")
-                        st.info(f"Not: {row['Notlar']}")
+                    c1, c2 = st.columns([3, 2])
                     
+                    # SOL TARAF: BİLGİLER VE GEÇMİŞ
+                    with c1:
+                        st.info(f"📝 **Güncel Not:** {row['Notlar']}")
+                        
+                        st.markdown("#### 🕒 İşlem Geçmişi")
+                        # Geçmişi Filtrele
+                        if not df_gecmis.empty:
+                            bu_gecmis = df_gecmis[df_gecmis['Basvuru_ID'] == row['ID']]
+                            if not bu_gecmis.empty:
+                                # Tarihe göre tersten sırala (En yeni en üstte)
+                                # Sadece Tarih, İşlem ve Detay sütunlarını göster
+                                st.dataframe(
+                                    bu_gecmis[['Tarih', 'Islem', 'Detay']].sort_index(ascending=False), 
+                                    hide_index=True,
+                                    use_container_width=True
+                                )
+                            else:
+                                st.caption("Geçmiş kaydı bulunamadı.")
+                        else:
+                            st.caption("Geçmiş verisi yok.")
+                    
+                    # SAĞ TARAF: GÜNCELLEME
                     with c2:
-                        y_durum = st.selectbox("Güncelle", ["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"], key=f"s_{row['ID']}", index=["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"].index(durum) if durum in ["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"] else 0)
-                        y_not = st.text_input("Not", value=row['Notlar'], key=f"n_{row['ID']}")
-                        if st.button("Kaydet", key=f"b_{row['ID']}"):
+                        st.write("### ⚙️ İşlemler")
+                        y_durum = st.selectbox("Durum", ["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"], key=f"s_{row['ID']}", index=["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"].index(durum) if durum in ["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"] else 0)
+                        y_not = st.text_input("Yeni Not Ekle", value=row['Notlar'], key=f"n_{row['ID']}")
+                        
+                        if st.button("Güncelle", key=f"b_{row['ID']}"):
                              with st.spinner("..."):
                                 veri_guncelle(ws_basvuru, ws_gecmis, row['ID'], row['Sirket'], row['Pozisyon'], y_durum, y_not)
+                             st.success("Güncellendi!")
                              st.rerun()
+                        
                         if st.button("Sil", key=f"del_{row['ID']}", type="primary"):
                              with st.spinner("..."):
                                 veri_sil(ws_basvuru, ws_gecmis, row['ID'])
@@ -182,40 +205,18 @@ with tab2:
         st.info("Analiz için veri gerekli.")
     else:
         st.subheader("📊 Başvuru Analizleri")
-        
-        col_grafik1, col_grafik2 = st.columns(2)
-        
-        with col_grafik1:
-            # 1. Durum Dağılımı (Pasta Grafiği) - RENKLİ
-            st.write("**Başvuru Durumları**")
-            
-            # Pasta Grafiği (Renk Haritasını Burada Kullanıyoruz)
-            fig_pie = px.pie(df, names='Durum', hole=0.4, 
-                             color='Durum',
-                             color_discrete_map=RENK_HARITASI)
-            
+        c_g1, c_g2 = st.columns(2)
+        with c_g1:
+            fig_pie = px.pie(df, names='Durum', hole=0.4, color='Durum', color_discrete_map=RENK_HARITASI)
             st.plotly_chart(fig_pie, use_container_width=True)
-            
-        with col_grafik2:
-            # 2. Şirket Bazlı Başvurular
-            st.write("**Şirketlere Göre Yoğunluk**")
+        with c_g2:
             sirket_counts = df['Sirket'].value_counts().reset_index()
             sirket_counts.columns = ['Sirket', 'Adet']
             fig_bar = px.bar(sirket_counts, x='Sirket', y='Adet')
             st.plotly_chart(fig_bar, use_container_width=True)
-
-        st.divider()
-        
-        # 3. Zaman Çizelgesi (Timeline) - RENKLİ
+            
         if 'Tarih_Obj' in df.columns and pd.notnull(df['Tarih_Obj']).any():
-            st.write("**Zaman İçinde Başvurular**")
+            st.divider()
             df_sorted = df.sort_values(by='Tarih_Obj')
-            
-            # Scatter Grafiği (Renk Haritasını Burada da Kullanıyoruz)
-            fig_line = px.scatter(df_sorted, x='Tarih_Obj', y='Sirket', 
-                                  color='Durum', 
-                                  size_max=15,
-                                  color_discrete_map=RENK_HARITASI,
-                                  title="Tarihsel Süreç")
-            
+            fig_line = px.scatter(df_sorted, x='Tarih_Obj', y='Sirket', color='Durum', size_max=15, color_discrete_map=RENK_HARITASI)
             st.plotly_chart(fig_line, use_container_width=True)
