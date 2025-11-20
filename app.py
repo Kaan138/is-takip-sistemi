@@ -92,14 +92,6 @@ def gecmis_tekil_sil(ws_g, gecmis_id):
     except Exception as e:
         st.error(f"Silme hatası: {e}")
 
-# --- STİL FONKSİYONU (TABLO İÇİN) ---
-def renklerdir(val):
-    """Pandas DataFrame'i boyamak için yardımcı fonksiyon"""
-    color = RENK_HARITASI.get(val, "")
-    if color:
-        return f'background-color: {color}; color: white; font-weight: bold;'
-    return ''
-
 # --- UYGULAMA BAŞLANGICI ---
 sheet = baglanti_kur()
 ws_basvuru, ws_gecmis = sayfalari_hazirla(sheet)
@@ -122,14 +114,15 @@ if not df_gecmis.empty:
     if 'Basvuru_ID' in df_gecmis.columns: df_gecmis['Basvuru_ID'] = df_gecmis['Basvuru_ID'].astype(str)
     if 'Gecmis_ID' in df_gecmis.columns: df_gecmis['Gecmis_ID'] = df_gecmis['Gecmis_ID'].astype(str)
 
-# --- SEKMELER (YENİ YAPI) ---
-tab_goruntule, tab_duzenle, tab_analiz = st.tabs(["👀 Görüntüle (Liste)", "✏️ Düzenle & Yönet", "📊 Analiz"])
+# --- SEKMELER ---
+tab_goruntule, tab_duzenle, tab_analiz = st.tabs(["👀 Görüntüle & Geçmiş", "✏️ Düzenle & Yönet", "📊 Analiz"])
 
 # ==========================================
-# TAB 1: SADECE GÖRÜNTÜLEME (LİSTE MODU)
+# TAB 1: GÖRÜNTÜLEME (DETAYLI GEÇMİŞLİ)
 # ==========================================
 with tab_goruntule:
-    st.markdown("### 📑 Tüm Başvurular")
+    st.markdown("### 🗂️ Başvuru Arşivi")
+    st.caption("Başvuru detaylarını ve tarihçesini görmek için satırlara tıklayın.")
     
     if df.empty:
         st.info("Henüz veri yok.")
@@ -148,22 +141,52 @@ with tab_goruntule:
         if filtre_ara:
             df_view = df_view[df_view['Sirket'].str.contains(filtre_ara, case=False)]
 
-        # Gereksiz sütunları (ID, Tarih_Obj) gizle
-        cols_to_show = ['Sirket', 'Pozisyon', 'Durum', 'Tarih', 'Notlar']
-        # Eğer veri çerçevesinde bu sütunlar varsa seç, yoksa hepsini göster
-        final_cols = [c for c in cols_to_show if c in df_view.columns]
-        
-        # Tabloyu Renklendir ve Göster
-        # "Durum" sütununu boyuyoruz
-        st.dataframe(
-            df_view[final_cols].style.applymap(renklerdir, subset=['Durum']),
-            use_container_width=True,
-            hide_index=True,
-            height=500 # Liste yüksekliği
-        )
+        st.divider()
+
+        # Her satırı bir EXPANDER (Açılır Kutu) olarak listele
+        for index, row in df_view.iterrows():
+            row_id = str(row['ID'])
+            durum = row['Durum']
+            
+            # İkon Belirle
+            icon = "⚪"
+            if durum == "Reddedildi": icon="🔴"
+            elif durum == "Teklif Alındı": icon="🟢"
+            elif durum == "Mülakat Bekleniyor": icon="🟠"
+            elif durum == "Görüşüldü": icon="🟡"
+
+            # Başlık
+            baslik = f"{icon} **{row['Sirket']}** - {row['Pozisyon']}  |  *Durum: {durum}*"
+            
+            with st.expander(baslik):
+                # İçerik Düzeni
+                col_detay, col_tarihce = st.columns([1, 2])
+                
+                # SOL: Özet Bilgi
+                with col_detay:
+                    st.markdown("#### 📌 Özet")
+                    st.write(f"**Tarih:** {row['Tarih']}")
+                    st.info(f"**Not:** {row['Notlar']}")
+
+                # SAĞ: Geçmiş Tablosu
+                with col_tarihce:
+                    st.markdown("#### 🕒 Süreç Geçmişi")
+                    if not df_gecmis.empty:
+                        bu_gecmis = df_gecmis[df_gecmis['Basvuru_ID'] == row_id].sort_values(by='Tarih', ascending=False)
+                        if not bu_gecmis.empty:
+                            # Sadece okuma amaçlı temiz bir tablo göster
+                            st.dataframe(
+                                bu_gecmis[['Tarih', 'Islem', 'Detay']], 
+                                hide_index=True,
+                                use_container_width=True
+                            )
+                        else:
+                            st.caption("Geçmiş kaydı yok.")
+                    else:
+                        st.caption("Geçmiş verisi yok.")
 
 # ==========================================
-# TAB 2: DÜZENLEME & KARTLAR (ESKİ TAB 1)
+# TAB 2: DÜZENLEME & KARTLAR
 # ==========================================
 with tab_duzenle:
     col_form, col_list = st.columns([1, 2])
@@ -186,11 +209,10 @@ with tab_duzenle:
 
     # SAĞ PANEL (KARTLAR)
     with col_list:
-        st.subheader("Düzenle & Geçmiş")
+        st.subheader("Düzenle & Yönet")
         if df.empty:
             st.info("Kayıt bulunamadı.")
         else:
-            # Buraya da basit bir arama koyalım
             arama_edit = st.text_input("Düzenlenecek Şirketi Ara", key="edit_search")
             df_edit = df.copy()
             if arama_edit:
@@ -208,9 +230,9 @@ with tab_duzenle:
                 with st.expander(f"{icon} {row['Sirket']} - {row['Pozisyon']}"):
                     c_gecmis, c_guncelle = st.columns([3, 2])
                     
-                    # SOL: GEÇMİŞ
+                    # SOL: GEÇMİŞ YÖNETİMİ
                     with c_gecmis:
-                        st.markdown("##### 🕒 İşlem Geçmişi")
+                        st.markdown("##### 🕒 İşlem Geçmişi (Yönet)")
                         if not df_gecmis.empty:
                             bu_gecmis = df_gecmis[df_gecmis['Basvuru_ID'] == row_id].sort_values(by='Tarih', ascending=False)
                             if not bu_gecmis.empty:
@@ -259,7 +281,7 @@ with tab_duzenle:
                                     st.rerun()
 
 # ==========================================
-# TAB 3: ANALİZ (ESKİ TAB 2)
+# TAB 3: ANALİZ
 # ==========================================
 with tab_analiz:
     if df.empty:
