@@ -42,7 +42,8 @@ def sayfalari_hazirla(sheet):
     try: ws_basvuru = sheet.worksheet("Basvurular")
     except:
         ws_basvuru = sheet.add_worksheet(title="Basvurular", rows="100", cols="20")
-        ws_basvuru.append_row(["ID", "Sirket", "Pozisyon", "Durum", "Tarih", "Notlar"])
+        # YENİ SÜTUN: Link
+        ws_basvuru.append_row(["ID", "Sirket", "Pozisyon", "Durum", "Tarih", "Notlar", "Link"])
     
     try: ws_gecmis = sheet.worksheet("Gecmis")
     except:
@@ -51,25 +52,30 @@ def sayfalari_hazirla(sheet):
     return ws_basvuru, ws_gecmis
 
 # --- CRUD İŞLEMLERİ ---
-def veri_ekle(ws_b, ws_g, sirket, pozisyon, durum, notlar):
+def veri_ekle(ws_b, ws_g, sirket, pozisyon, durum, notlar, link):
     tarih = datetime.now().strftime("%d-%m-%Y %H:%M")
     basvuru_id = str(uuid.uuid4())[:8]
     gecmis_id = str(uuid.uuid4())[:8]
     
-    ws_b.append_row([basvuru_id, sirket, pozisyon, durum, tarih, notlar])
+    if not link: link = "" # Link boşsa hata vermesin
+    
+    ws_b.append_row([basvuru_id, sirket, pozisyon, durum, tarih, notlar, link])
     ws_g.append_row([gecmis_id, basvuru_id, "YENİ KAYIT", f"Durum: {durum}", tarih])
 
-def veri_guncelle(ws_b, ws_g, id, sirket, pozisyon, durum, notlar):
+def veri_guncelle(ws_b, ws_g, id, sirket, pozisyon, durum, notlar, link):
     tarih = datetime.now().strftime("%d-%m-%Y %H:%M")
     try:
         cell = ws_b.find(id)
         row = cell.row
         eski_durum = ws_b.cell(row, 4).value
+        
+        # Hücre Güncellemeleri
         ws_b.update_cell(row, 2, sirket)
         ws_b.update_cell(row, 3, pozisyon)
         ws_b.update_cell(row, 4, durum)
         ws_b.update_cell(row, 5, tarih)
         ws_b.update_cell(row, 6, notlar)
+        ws_b.update_cell(row, 7, link) # 7. Sütun Link
         
         gecmis_id = str(uuid.uuid4())[:8]
         if eski_durum != durum:
@@ -109,6 +115,8 @@ df_gecmis = pd.DataFrame(data_g)
 if not df.empty:
     if 'ID' in df.columns: df['ID'] = df['ID'].astype(str)
     if 'Tarih' in df.columns: df['Tarih_Obj'] = pd.to_datetime(df['Tarih'], format="%d-%m-%Y %H:%M", errors='coerce')
+    # Link sütunu yoksa (eski veri varsa) oluştur
+    if 'Link' not in df.columns: df['Link'] = ""
 
 if not df_gecmis.empty:
     if 'Basvuru_ID' in df_gecmis.columns: df_gecmis['Basvuru_ID'] = df_gecmis['Basvuru_ID'].astype(str)
@@ -118,23 +126,21 @@ if not df_gecmis.empty:
 tab_goruntule, tab_duzenle, tab_analiz = st.tabs(["👀 Görüntüle & Geçmiş", "✏️ Düzenle & Yönet", "📊 Analiz"])
 
 # ==========================================
-# TAB 1: GÖRÜNTÜLEME (DETAYLI GEÇMİŞLİ)
+# TAB 1: GÖRÜNTÜLEME
 # ==========================================
 with tab_goruntule:
     st.markdown("### 🗂️ Başvuru Arşivi")
-    st.caption("Başvuru detaylarını ve tarihçesini görmek için satırlara tıklayın.")
+    st.caption("Detaylar için satırlara tıklayın.")
     
     if df.empty:
         st.info("Henüz veri yok.")
     else:
-        # Filtreleme Alanı
         col_f1, col_f2 = st.columns(2)
         with col_f1:
-            filtre_durum = st.multiselect("Duruma Göre Filtrele", df['Durum'].unique(), key="view_filter")
+            filtre_durum = st.multiselect("Durum Filtresi", df['Durum'].unique(), key="view_filter")
         with col_f2:
-            filtre_ara = st.text_input("Hızlı Arama (Şirket)", key="view_search")
+            filtre_ara = st.text_input("Hızlı Arama", key="view_search")
 
-        # Filtreleri Uygula
         df_view = df.copy()
         if filtre_durum:
             df_view = df_view[df_view['Durum'].isin(filtre_durum)]
@@ -143,71 +149,69 @@ with tab_goruntule:
 
         st.divider()
 
-        # Her satırı bir EXPANDER (Açılır Kutu) olarak listele
         for index, row in df_view.iterrows():
             row_id = str(row['ID'])
             durum = row['Durum']
+            link = row.get('Link', '') # Linki güvenli çek
             
-            # İkon Belirle
             icon = "⚪"
             if durum == "Reddedildi": icon="🔴"
             elif durum == "Teklif Alındı": icon="🟢"
             elif durum == "Mülakat Bekleniyor": icon="🟠"
             elif durum == "Görüşüldü": icon="🟡"
 
-            # Başlık
             baslik = f"{icon} **{row['Sirket']}** - {row['Pozisyon']}  |  *Durum: {durum}*"
             
             with st.expander(baslik):
-                # İçerik Düzeni
                 col_detay, col_tarihce = st.columns([1, 2])
                 
-                # SOL: Özet Bilgi
                 with col_detay:
                     st.markdown("#### 📌 Özet")
                     st.write(f"**Tarih:** {row['Tarih']}")
                     st.info(f"**Not:** {row['Notlar']}")
+                    
+                    # LİNK BUTONU
+                    if link and str(link).startswith("http"):
+                        st.link_button("🔗 İlana Git", link)
+                    elif link:
+                        st.warning(f"Link formatı hatalı: {link}")
+                    else:
+                        st.caption("Link eklenmemiş.")
 
-                # SAĞ: Geçmiş Tablosu
                 with col_tarihce:
                     st.markdown("#### 🕒 Süreç Geçmişi")
                     if not df_gecmis.empty:
                         bu_gecmis = df_gecmis[df_gecmis['Basvuru_ID'] == row_id].sort_values(by='Tarih', ascending=False)
                         if not bu_gecmis.empty:
-                            # Sadece okuma amaçlı temiz bir tablo göster
-                            st.dataframe(
-                                bu_gecmis[['Tarih', 'Islem', 'Detay']], 
-                                hide_index=True,
-                                use_container_width=True
-                            )
+                            st.dataframe(bu_gecmis[['Tarih', 'Islem', 'Detay']], hide_index=True, use_container_width=True)
                         else:
                             st.caption("Geçmiş kaydı yok.")
                     else:
                         st.caption("Geçmiş verisi yok.")
 
 # ==========================================
-# TAB 2: DÜZENLEME & KARTLAR
+# TAB 2: DÜZENLEME
 # ==========================================
 with tab_duzenle:
     col_form, col_list = st.columns([1, 2])
 
-    # SOL PANEL (EKLEME)
     with col_form:
         st.subheader("Yeni Ekle")
         with st.form("ekle_form", clear_on_submit=True):
             s_sirket = st.text_input("Şirket")
             s_pozisyon = st.text_input("Pozisyon")
+            s_link = st.text_input("İlan Linki (URL)") # Yeni Alan
             s_durum = st.selectbox("Durum", ["Başvuruldu", "Görüşüldü", "Mülakat Bekleniyor", "Teklif Alındı", "Reddedildi"])
             s_not = st.text_area("Not")
+            
             if st.form_submit_button("Kaydet"):
                 if s_sirket and s_pozisyon:
                     with st.spinner("Kaydediliyor..."):
-                        veri_ekle(ws_basvuru, ws_gecmis, s_sirket, s_pozisyon, s_durum, s_not)
+                        veri_ekle(ws_basvuru, ws_gecmis, s_sirket, s_pozisyon, s_durum, s_not, s_link)
                     st.rerun()
                 else:
                     st.error("Eksik bilgi.")
 
-    # SAĞ PANEL (KARTLAR)
     with col_list:
         st.subheader("Düzenle & Yönet")
         if df.empty:
@@ -221,6 +225,8 @@ with tab_duzenle:
             for index, row in df_edit.iterrows():
                 row_id = str(row['ID'])
                 durum = row['Durum']
+                current_link = row.get('Link', '')
+                
                 icon = "⚪"
                 if durum == "Reddedildi": icon="🔴"
                 elif durum == "Teklif Alındı": icon="🟢"
@@ -230,9 +236,8 @@ with tab_duzenle:
                 with st.expander(f"{icon} {row['Sirket']} - {row['Pozisyon']}"):
                     c_gecmis, c_guncelle = st.columns([3, 2])
                     
-                    # SOL: GEÇMİŞ YÖNETİMİ
                     with c_gecmis:
-                        st.markdown("##### 🕒 İşlem Geçmişi (Yönet)")
+                        st.markdown("##### 🕒 İşlem Geçmişi")
                         if not df_gecmis.empty:
                             bu_gecmis = df_gecmis[df_gecmis['Basvuru_ID'] == row_id].sort_values(by='Tarih', ascending=False)
                             if not bu_gecmis.empty:
@@ -245,7 +250,6 @@ with tab_duzenle:
                                             st.caption(f"{h_row['Detay']}")
                                         with gc2:
                                             with st.popover("Sil", use_container_width=True):
-                                                st.write("Silinsin mi?")
                                                 if st.button("Evet", key=f"gs_{g_id}"):
                                                     with st.spinner("Siliniyor..."):
                                                         gecmis_tekil_sil(ws_gecmis, g_id)
@@ -256,7 +260,6 @@ with tab_duzenle:
                         else:
                             st.info("Geçmiş verisi yok.")
 
-                    # SAĞ: GÜNCELLEME
                     with c_guncelle:
                         st.markdown("##### ⚙️ Güncelleme")
                         idx = 0
@@ -264,17 +267,17 @@ with tab_duzenle:
                         if durum in secenekler: idx = secenekler.index(durum)
                         
                         y_durum = st.selectbox("Durum", secenekler, key=f"s_{row_id}", index=idx)
+                        y_link = st.text_input("Link", value=current_link, key=f"l_{row_id}") # Link Düzenleme
                         y_not = st.text_input("Not", value=row['Notlar'], key=f"n_{row_id}")
                         
                         cb1, cb2 = st.columns(2)
                         with cb1:
                             if st.button("💾 Kaydet", key=f"save_{row_id}"):
                                 with st.spinner("..."):
-                                    veri_guncelle(ws_basvuru, ws_gecmis, row_id, row['Sirket'], row['Pozisyon'], y_durum, y_not)
+                                    veri_guncelle(ws_basvuru, ws_gecmis, row_id, row['Sirket'], row['Pozisyon'], y_durum, y_not, y_link)
                                 st.rerun()
                         with cb2:
                             with st.popover("🗑️ Sil", use_container_width=True):
-                                st.error("Başvuru tamamen silinsin mi?")
                                 if st.button("Evet, Sil", key=f"del_confirm_{row_id}", type="primary"):
                                     with st.spinner("..."):
                                         veri_sil(ws_basvuru, ws_gecmis, row_id)
