@@ -245,7 +245,7 @@ with tab_goruntule:
         with c1:
             pdf_data = create_pdf(df, df_gecmis)
             st.download_button(
-                label="📄 Modern Rapor İndir",
+                label="📄 Rapor İndir",
                 data=pdf_data,
                 file_name="Kariyer_Raporu.pdf",
                 mime="application/pdf",
@@ -389,3 +389,4 @@ with tab_analiz:
             df_count.columns = ['Sirket', 'Adet']
             fig2 = px.bar(df_count, x='Sirket', y='Adet')
             st.plotly_chart(fig2, use_container_width=True)
+
