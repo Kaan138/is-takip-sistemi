@@ -51,9 +51,32 @@ def sayfalari_hazirla(sheet):
         ws_gecmis.append_row(["Gecmis_ID", "Basvuru_ID", "Islem", "Detay", "Tarih"])
     return ws_basvuru, ws_gecmis
 
-# --- PDF MOTORU (GÜNCELLENDİ) ---
+# --- MODERN PDF MOTORU ---
+class ModernPDF(FPDF):
+    def header(self):
+        # Üst Şerit (Koyu Lacivert)
+        self.set_fill_color(44, 62, 80) 
+        self.rect(0, 0, 210, 30, 'F') # A4 genişliği 210mm
+        
+        # Başlık Yazısı
+        self.set_font('Arial', 'B', 20)
+        self.set_text_color(255, 255, 255) # Beyaz
+        self.cell(0, 15, 'IS BASVURU VE SUREC RAPORU', 0, 1, 'C')
+        
+        # Tarih
+        self.set_font('Arial', 'I', 10)
+        self.cell(0, 0, f"Olusturulma Tarihi: {datetime.now().strftime('%d-%m-%Y')}", 0, 1, 'C')
+        self.ln(15) # Boşluk bırak
+
+    def footer(self):
+        # Alt Şerit
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.set_text_color(128, 128, 128)
+        self.cell(0, 10, f'Sayfa {self.page_no()}', 0, 0, 'C')
+
 def clean_text(text):
-    """Türkçe karakterleri PDF uyumlu hale getirir"""
+    """Türkçe karakter temizleyici"""
     if not isinstance(text, str): return str(text)
     replacements = {
         'ş': 's', 'Ş': 'S', 'ı': 'i', 'İ': 'I', 'ğ': 'g', 'Ğ': 'G',
@@ -64,58 +87,85 @@ def clean_text(text):
     return text
 
 def create_pdf(df, df_gecmis):
-    pdf = FPDF()
+    pdf = ModernPDF()
     pdf.add_page()
-    
-    # Başlık
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Is Basvuru Detay Raporu", ln=True, align='C')
-    pdf.ln(10)
+    pdf.set_auto_page_break(auto=True, margin=25)
     
     for index, row in df.iterrows():
-        # Ana Bilgiler
+        # Veri Hazırlığı
         sirket = clean_text(row['Sirket'])
         pozisyon = clean_text(row['Pozisyon'])
         durum = clean_text(row['Durum'])
         tarih = clean_text(row['Tarih'])
         notlar = clean_text(row['Notlar'])
+        link = str(row.get('Link', ''))
         row_id = str(row['ID'])
-        
-        # Gri Arka Planlı Başlık (Şirket - Pozisyon)
+
+        # --- ŞİRKET KARTI ---
+        # Kart Başlığı (Gri Arka Plan)
+        pdf.set_fill_color(236, 240, 241) # Açık Gri
+        pdf.set_text_color(44, 62, 80)    # Koyu Lacivert Yazı
         pdf.set_font("Arial", "B", 12)
-        pdf.set_fill_color(240, 240, 240) # Açık gri
-        pdf.cell(0, 10, f"{sirket} - {pozisyon}", ln=True, fill=True)
+        pdf.cell(0, 10, f"  {sirket.upper()} - {pozisyon}", 0, 1, 'L', fill=True)
         
-        # Detay Satırı
+        # Detaylar
+        pdf.set_text_color(0, 0, 0) # Siyah
         pdf.set_font("Arial", "", 10)
-        pdf.cell(0, 8, f"Durum: {durum}  |  Son Islem Tarihi: {tarih}", ln=True)
+        pdf.ln(2)
         
-        # Notlar (Varsa)
+        # Durum Rengi Ayarla
+        pdf.write(5, "Durum: ")
+        pdf.set_font("Arial", "B", 10)
+        
+        # Duruma göre renk ver (RGB)
+        if "Teklif" in durum: pdf.set_text_color(39, 174, 96)   # Yeşil
+        elif "Red" in durum: pdf.set_text_color(192, 57, 43)    # Kırmızı
+        elif "Mulakat" in durum: pdf.set_text_color(211, 84, 0) # Turuncu
+        else: pdf.set_text_color(41, 128, 185)                  # Mavi
+            
+        pdf.write(5, f"{durum}")
+        
+        # Rengi Sıfırla ve Diğer Bilgiler
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Arial", "", 10)
+        pdf.write(5, f"  |  Tarih: {tarih}")
+        pdf.ln(6)
+        
+        # Notlar
         if notlar:
-            pdf.set_font("Arial", "I", 10)
-            pdf.multi_cell(0, 6, f"Guncel Not: {notlar}")
+            pdf.set_font("Arial", "I", 9)
+            pdf.multi_cell(0, 5, f"Not: {notlar}")
         
-        # Geçmiş (Tarihçe)
+        # Link
+        if link and len(link) > 5:
+            pdf.set_text_color(0, 0, 255)
+            pdf.set_font("Arial", "U", 9)
+            pdf.cell(0, 5, "Ilan Linki", link=link)
+            pdf.ln(6)
+            pdf.set_text_color(0, 0, 0)
+
+        # --- GEÇMİŞ (TİMELİNE) ---
         if not df_gecmis.empty:
             bu_gecmis = df_gecmis[df_gecmis['Basvuru_ID'] == row_id].sort_values(by='Tarih', ascending=False)
             
             if not bu_gecmis.empty:
                 pdf.ln(2)
-                pdf.set_font("Arial", "B", 9)
-                pdf.cell(0, 6, "Islem Gecmisi:", ln=True)
-                pdf.set_font("Arial", "", 8)
+                pdf.set_font("Arial", "B", 8)
+                pdf.set_text_color(100, 100, 100)
+                pdf.cell(0, 5, "SUREC GECMISI:", ln=True)
                 
+                pdf.set_font("Arial", "", 8)
                 for idx, h_row in bu_gecmis.iterrows():
                     h_tarih = clean_text(h_row['Tarih'])
-                    h_islem = clean_text(h_row['Islem'])
                     h_detay = clean_text(h_row['Detay'])
-                    # Geçmiş satırı: Tarih | İşlem : Detay
-                    pdf.cell(0, 5, f"- {h_tarih} | {h_islem}: {h_detay}", ln=True)
+                    # Liste işareti gibi göster
+                    pdf.cell(5) # Girinti
+                    pdf.cell(0, 4, f">> {h_tarih}: {h_detay}", ln=True)
         
-        # Ayırıcı Çizgi
-        pdf.ln(4)
-        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-        pdf.ln(4)
+        # Ayırıcı Çizgi (İnce)
+        pdf.set_draw_color(200, 200, 200)
+        pdf.line(10, pdf.get_y()+5, 200, pdf.get_y()+5)
+        pdf.ln(10)
         
     return pdf.output(dest='S').encode('latin-1')
 
@@ -125,7 +175,6 @@ def veri_ekle(ws_b, ws_g, sirket, pozisyon, durum, notlar, link):
     basvuru_id = str(uuid.uuid4())[:8]
     gecmis_id = str(uuid.uuid4())[:8]
     if not link: link = ""
-    
     ws_b.append_row([basvuru_id, sirket, pozisyon, durum, tarih, notlar, link])
     ws_g.append_row([gecmis_id, basvuru_id, "YENİ KAYIT", f"Durum: {durum}", tarih])
 
@@ -135,7 +184,6 @@ def veri_guncelle(ws_b, ws_g, id, sirket, pozisyon, durum, notlar, link):
         cell = ws_b.find(id)
         row = cell.row
         eski_durum = ws_b.cell(row, 4).value
-        
         ws_b.update_cell(row, 2, sirket)
         ws_b.update_cell(row, 3, pozisyon)
         ws_b.update_cell(row, 4, durum)
@@ -194,12 +242,11 @@ with tab_goruntule:
         # ÜST PANEL
         c1, c2, c3 = st.columns([1, 2, 2])
         with c1:
-            # PDF'e hem ana tabloyu hem geçmişi gönderiyoruz
             pdf_data = create_pdf(df, df_gecmis)
             st.download_button(
-                label="📄 Detaylı PDF İndir",
+                label="📄 Modern PDF İndir",
                 data=pdf_data,
-                file_name="basvuru_raporu.pdf",
+                file_name="Kariyer_Raporu.pdf",
                 mime="application/pdf",
                 type="primary"
             )
