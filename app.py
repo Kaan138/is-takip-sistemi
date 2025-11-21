@@ -228,7 +228,7 @@ with tab_goruntule:
             st.download_button(
                 label="📄İndir",
                 data=pdf_data,
-                file_name="Basvuru_Kutucuklu.pdf",
+                file_name="Basvurular.pdf",
                 mime="application/pdf",
                 type="primary"
             )
@@ -370,4 +370,5 @@ with tab_analiz:
             df_count.columns = ['Sirket', 'Adet']
             fig2 = px.bar(df_count, x='Sirket', y='Adet')
             st.plotly_chart(fig2, use_container_width=True)
+
 
