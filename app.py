@@ -11,7 +11,7 @@ from fpdf import FPDF
 # --- AYARLAR ---
 st.set_page_config(page_title="Kariyer Takip", layout="wide", page_icon="💼")
 
-# --- RENK VE STİL AYARLARI ---
+# --- RENK AYARLARI ---
 RENK_HARITASI = {
     "Teklif Alındı": "#2ECC71",      # Yeşil
     "Reddedildi": "#E74C3C",         # Kırmızı
@@ -51,32 +51,22 @@ def sayfalari_hazirla(sheet):
         ws_gecmis.append_row(["Gecmis_ID", "Basvuru_ID", "Islem", "Detay", "Tarih"])
     return ws_basvuru, ws_gecmis
 
-# --- MODERN PDF MOTORU ---
-class ModernPDF(FPDF):
+# --- KUTUCUKLU PDF MOTORU ---
+class BoxPDF(FPDF):
     def header(self):
-        # Üst Şerit (Koyu Lacivert)
-        self.set_fill_color(44, 62, 80) 
-        self.rect(0, 0, 210, 30, 'F') # A4 genişliği 210mm
-        
-        # Başlık Yazısı
+        # Sayfa Başlığı
         self.set_font('Arial', 'B', 20)
-        self.set_text_color(255, 255, 255) # Beyaz
-        self.cell(0, 15, 'IS BASVURU VE SUREC RAPORU', 0, 1, 'C')
-        
-        # Tarih
-        self.set_font('Arial', 'I', 10)
-        self.cell(0, 0, f"Olusturulma Tarihi: {datetime.now().strftime('%d-%m-%Y')}", 0, 1, 'C')
-        self.ln(15) # Boşluk bırak
+        self.set_text_color(33, 37, 41)
+        self.cell(0, 10, 'BASVURU RAPORU', 0, 1, 'C')
+        self.ln(5)
 
     def footer(self):
-        # Alt Şerit
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
-        self.set_text_color(128, 128, 128)
+        self.set_text_color(128)
         self.cell(0, 10, f'Sayfa {self.page_no()}', 0, 0, 'C')
 
 def clean_text(text):
-    """Türkçe karakter temizleyici"""
     if not isinstance(text, str): return str(text)
     replacements = {
         'ş': 's', 'Ş': 'S', 'ı': 'i', 'İ': 'I', 'ğ': 'g', 'Ğ': 'G',
@@ -87,12 +77,15 @@ def clean_text(text):
     return text
 
 def create_pdf(df, df_gecmis):
-    pdf = ModernPDF()
+    pdf = BoxPDF()
     pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=25)
+    pdf.set_auto_page_break(auto=True, margin=20)
     
     for index, row in df.iterrows():
-        # Veri Hazırlığı
+        # Sayfa sonuna geldik mi kontrolü
+        if pdf.get_y() > 250:
+            pdf.add_page()
+
         sirket = clean_text(row['Sirket'])
         pozisyon = clean_text(row['Pozisyon'])
         durum = clean_text(row['Durum'])
@@ -101,71 +94,60 @@ def create_pdf(df, df_gecmis):
         link = str(row.get('Link', ''))
         row_id = str(row['ID'])
 
-        # --- ŞİRKET KARTI ---
-        # Kart Başlığı (Gri Arka Plan)
-        pdf.set_fill_color(236, 240, 241) # Açık Gri
-        pdf.set_text_color(44, 62, 80)    # Koyu Lacivert Yazı
+        # --- KUTU BAŞLIĞI (RENKLİ ŞERİT) ---
+        # Mavi başlık, beyaz yazı
+        pdf.set_fill_color(41, 128, 185) 
+        pdf.set_text_color(255, 255, 255)
         pdf.set_font("Arial", "B", 12)
-        pdf.cell(0, 10, f"  {sirket.upper()} - {pozisyon}", 0, 1, 'L', fill=True)
         
-        # Detaylar
-        pdf.set_text_color(0, 0, 0) # Siyah
+        # 1. Satır: Başlık Şeridi
+        # (Kenarlıkları çiziyoruz: 1 = tam çerçeve)
+        header_text = f"  {sirket.upper()}  |  {pozisyon}"
+        pdf.cell(0, 10, header_text, 1, 1, 'L', fill=True)
+        
+        # --- KUTU İÇERİĞİ (YAN ÇİZGİLERLE DEVAM) ---
+        # Artık her satırda 'LR' (Left-Right) border kullanacağız ki kutu bütün görünsün.
+        
+        pdf.set_text_color(0, 0, 0) # Siyah yazı
+        pdf.set_fill_color(255, 255, 255) # Beyaz arka plan
+        
+        # Durum ve Tarih
         pdf.set_font("Arial", "", 10)
-        pdf.ln(2)
+        pdf.cell(0, 8, f"  Durum: {durum}   -   Tarih: {tarih}", "LR", 1, 'L', fill=True)
         
-        # Durum Rengi Ayarla
-        pdf.write(5, "Durum: ")
-        pdf.set_font("Arial", "B", 10)
-        
-        # Duruma göre renk ver (RGB)
-        if "Teklif" in durum: pdf.set_text_color(39, 174, 96)   # Yeşil
-        elif "Red" in durum: pdf.set_text_color(192, 57, 43)    # Kırmızı
-        elif "Mulakat" in durum: pdf.set_text_color(211, 84, 0) # Turuncu
-        else: pdf.set_text_color(41, 128, 185)                  # Mavi
-            
-        pdf.write(5, f"{durum}")
-        
-        # Rengi Sıfırla ve Diğer Bilgiler
-        pdf.set_text_color(0, 0, 0)
-        pdf.set_font("Arial", "", 10)
-        pdf.write(5, f"  |  Tarih: {tarih}")
-        pdf.ln(6)
-        
-        # Notlar
+        # Notlar (MultiCell olduğu için yükseklik ayarı otomatik olmalı)
         if notlar:
             pdf.set_font("Arial", "I", 9)
-            pdf.multi_cell(0, 5, f"Not: {notlar}")
-        
+            pdf.set_text_color(80, 80, 80)
+            # MultiCell'de border='LR' vererek yan çizgileri koruyoruz
+            pdf.multi_cell(0, 6, f"  Not: {notlar}", "LR", 'L', fill=True)
+            
         # Link
         if link and len(link) > 5:
             pdf.set_text_color(0, 0, 255)
             pdf.set_font("Arial", "U", 9)
-            pdf.cell(0, 5, "Ilan Linki", link=link)
-            pdf.ln(6)
-            pdf.set_text_color(0, 0, 0)
-
-        # --- GEÇMİŞ (TİMELİNE) ---
+            pdf.cell(0, 6, "  Ilan Linki", "LR", 1, 'L', fill=True, link=link)
+        
+        # Geçmiş
         if not df_gecmis.empty:
             bu_gecmis = df_gecmis[df_gecmis['Basvuru_ID'] == row_id].sort_values(by='Tarih', ascending=False)
-            
             if not bu_gecmis.empty:
-                pdf.ln(2)
+                pdf.set_text_color(0, 0, 0)
                 pdf.set_font("Arial", "B", 8)
-                pdf.set_text_color(100, 100, 100)
-                pdf.cell(0, 5, "SUREC GECMISI:", ln=True)
+                pdf.cell(0, 6, "  Islem Gecmisi:", "LR", 1, 'L', fill=True)
                 
                 pdf.set_font("Arial", "", 8)
+                pdf.set_text_color(100, 100, 100)
                 for idx, h_row in bu_gecmis.iterrows():
-                    h_tarih = clean_text(h_row['Tarih'])
-                    h_detay = clean_text(h_row['Detay'])
-                    # Liste işareti gibi göster
-                    pdf.cell(5) # Girinti
-                    pdf.cell(0, 4, f">> {h_tarih}: {h_detay}", ln=True)
+                    h_log = f"  >> {clean_text(h_row['Tarih'])}: {clean_text(h_row['Detay'])}"
+                    pdf.cell(0, 5, h_log, "LR", 1, 'L', fill=True)
+
+        # --- KUTUYU KAPAT (ALT ÇİZGİ) ---
+        # Son olarak üstü açık ("T"op border) bir hücre çizerek kutuyu alttan kapatıyoruz.
+        pdf.cell(0, 1, "", "T", 1, 'L')
         
-        # Ayırıcı Çizgi (İnce)
-        pdf.set_draw_color(200, 200, 200)
-        pdf.line(10, pdf.get_y()+5, 200, pdf.get_y()+5)
-        pdf.ln(10)
+        # Kutular arası boşluk
+        pdf.ln(5)
         
     return pdf.output(dest='S').encode('latin-1')
 
@@ -239,14 +221,14 @@ with tab_goruntule:
     if df.empty:
         st.info("Henüz veri yok.")
     else:
-        # ÜST PANEL
         c1, c2, c3 = st.columns([1, 2, 2])
         with c1:
+            # PDF Butonu
             pdf_data = create_pdf(df, df_gecmis)
             st.download_button(
-                label="📄 Modern PDF İndir",
+                label="📄 Raporu İndir (Kutucuklu)",
                 data=pdf_data,
-                file_name="Kariyer_Raporu.pdf",
+                file_name="Basvuru_Kutucuklu.pdf",
                 mime="application/pdf",
                 type="primary"
             )
