@@ -11,7 +11,7 @@ from fpdf import FPDF
 # --- AYARLAR ---
 st.set_page_config(page_title="Kariyer Takip", layout="wide", page_icon="💼")
 
-# --- RENK VE STİL AYARLARI ---
+# --- RENK AYARLARI ---
 RENK_HARITASI = {
     "Teklif Alındı": "#2ECC71",      # Yeşil
     "Reddedildi": "#E74C3C",         # Kırmızı
@@ -51,19 +51,17 @@ def sayfalari_hazirla(sheet):
         ws_gecmis.append_row(["Gecmis_ID", "Basvuru_ID", "Islem", "Detay", "Tarih"])
     return ws_basvuru, ws_gecmis
 
-# --- MINIMALIST PDF MOTORU ---
+# --- MINIMALIST PDF MOTORU (DÜZELTİLMİŞ) ---
 class MinimalPDF(FPDF):
     def header(self):
-        # Çok sade bir başlık: Sol tarafta İsim, Sağ tarafta Tarih
         self.set_font('Arial', 'B', 16)
-        self.set_text_color(0, 0, 0) # Tam Siyah
+        self.set_text_color(0, 0, 0)
         self.cell(100, 10, 'IS BASVURU RAPORU', 0, 0, 'L')
         
         self.set_font('Arial', '', 10)
-        self.set_text_color(100, 100, 100) # Gri
+        self.set_text_color(100, 100, 100)
         self.cell(0, 10, datetime.now().strftime('%d.%m.%Y'), 0, 1, 'R')
         
-        # Kalın Siyah Çizgi
         self.set_draw_color(0, 0, 0)
         self.set_line_width(0.5)
         self.line(10, 20, 200, 20)
@@ -76,14 +74,24 @@ class MinimalPDF(FPDF):
         self.cell(0, 10, f'{self.page_no()}', 0, 0, 'C')
 
 def clean_text(text):
+    """
+    GÜÇLENDİRİLMİŞ TEMİZLİK FONKSİYONU
+    Türkçe karakterleri, emojileri ve bozuk karakterleri temizler.
+    """
     if not isinstance(text, str): return str(text)
+    
+    # 1. Manuel Değişiklikler (Türkçe ve Özel İşaretler)
     replacements = {
         'ş': 's', 'Ş': 'S', 'ı': 'i', 'İ': 'I', 'ğ': 'g', 'Ğ': 'G',
-        'ü': 'u', 'Ü': 'U', 'ö': 'o', 'Ö': 'O', 'ç': 'c', 'Ç': 'C'
+        'ü': 'u', 'Ü': 'U', 'ö': 'o', 'Ö': 'O', 'ç': 'c', 'Ç': 'C',
+        '“': '"', '”': '"', '’': "'", '‘': "'", '–': '-', '—': '-', '€': 'Euro'
     }
     for tr, en in replacements.items():
         text = text.replace(tr, en)
-    return text
+    
+    # 2. Kalan her şeyi zorla Latin-1'e çevir. 
+    # Tanınmayan (emoji vb.) karakterler varsa hata vermek yerine '?' yapar.
+    return text.encode('latin-1', 'replace').decode('latin-1')
 
 def create_pdf(df, df_gecmis):
     pdf = MinimalPDF()
@@ -99,33 +107,28 @@ def create_pdf(df, df_gecmis):
         link = str(row.get('Link', ''))
         row_id = str(row['ID'])
 
-        # 1. Satır: ŞİRKET İSMİ (Büyük ve Bold)
+        # 1. Satır
         pdf.set_font("Arial", "B", 14)
-        pdf.set_text_color(33, 33, 33) # Koyu Gri/Siyah
-        # Şirket isminin yanına Pozisyonu ekliyoruz ama daha ince
+        pdf.set_text_color(33, 33, 33)
         pdf.write(8, sirket.upper())
         
         pdf.set_font("Arial", "", 14)
-        pdf.set_text_color(100, 100, 100) # Açık Gri
+        pdf.set_text_color(100, 100, 100)
         pdf.write(8, "  /  " + pozisyon)
         pdf.ln(8)
         
-        # 2. Satır: Meta Veriler (Durum | Tarih | Link)
+        # 2. Satır
         pdf.set_font("Arial", "B", 9)
-        
-        # Durum Rengi (Basitçe Metin Rengi)
-        if "Teklif" in durum: pdf.set_text_color(34, 139, 34)   # Yeşil
-        elif "Red" in durum: pdf.set_text_color(178, 34, 34)    # Kırmızı
-        elif "Mulakat" in durum: pdf.set_text_color(255, 140, 0) # Turuncu
-        else: pdf.set_text_color(70, 130, 180)                  # Mavi
+        if "Teklif" in durum: pdf.set_text_color(34, 139, 34)
+        elif "Red" in durum: pdf.set_text_color(178, 34, 34)
+        elif "Mulakat" in durum: pdf.set_text_color(255, 140, 0)
+        else: pdf.set_text_color(70, 130, 180)
         
         pdf.write(6, durum.upper())
         
-        # Araya ayırıcı nokta
         pdf.set_text_color(180, 180, 180)
         pdf.write(6, "   •   ")
         
-        # Tarih
         pdf.set_text_color(80, 80, 80)
         pdf.set_font("Arial", "", 9)
         pdf.write(6, tarih)
@@ -139,22 +142,21 @@ def create_pdf(df, df_gecmis):
         
         pdf.ln(8)
         
-        # 3. Satır: Notlar (Minimal girintili blok)
+        # 3. Satır
         if notlar:
-            pdf.set_draw_color(220, 220, 220) # Çok açık gri çizgi
+            pdf.set_draw_color(220, 220, 220)
             pdf.set_line_width(0.5)
-            # Sol tarafa dikey bir çizgi çekerek alıntı gibi gösterelim
             x = pdf.get_x()
             y = pdf.get_y()
-            pdf.line(x, y, x, y + 5) # Kısa dikey çizgi
+            pdf.line(x, y, x, y + 5)
             
-            pdf.set_x(x + 4) # Biraz içeri gir
+            pdf.set_x(x + 4)
             pdf.set_font("Arial", "I", 10)
             pdf.set_text_color(60, 60, 60)
             pdf.multi_cell(0, 5, notlar)
             pdf.ln(2)
             
-        # 4. Satır: Geçmiş (Çok sade liste)
+        # 4. Satır
         if not df_gecmis.empty:
             bu_gecmis = df_gecmis[df_gecmis['Basvuru_ID'] == row_id].sort_values(by='Tarih', ascending=False)
             if not bu_gecmis.empty:
@@ -169,13 +171,13 @@ def create_pdf(df, df_gecmis):
                     h_log = f"{clean_text(h_row['Tarih'])} - {clean_text(h_row['Detay'])}"
                     pdf.cell(0, 4, h_log, ln=True)
 
-        # Ayırıcı (Çok ince, sayfanın %30'u kadar çizgi)
         pdf.ln(8)
         pdf.set_draw_color(230, 230, 230)
-        pdf.line(10, pdf.get_y(), 200, pdf.get_y()) # Tam boy çizgi ama çok silik
+        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
         pdf.ln(8)
         
-    return pdf.output(dest='S').encode('latin-1')
+    # Çıktıyı latin-1 encode ederek string'e çevir
+    return pdf.output(dest='S').encode('latin-1', 'replace')
 
 # --- CRUD İŞLEMLERİ ---
 def veri_ekle(ws_b, ws_g, sirket, pozisyon, durum, notlar, link):
@@ -249,7 +251,6 @@ with tab_goruntule:
     else:
         c1, c2, c3 = st.columns([1, 2, 2])
         with c1:
-            # PDF Butonu
             pdf_data = create_pdf(df, df_gecmis)
             st.download_button(
                 label="📄 Minimalist Rapor İndir",
